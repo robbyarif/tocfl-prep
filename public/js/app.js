@@ -83,11 +83,55 @@ function route() {
     if (!session) { location.hash = '#/'; return; }
     return session.mode === 'practice' ? renderPractice() : renderAdaptive();
   }
+  const r = path.match(/^\/resume\/(.+)$/);
+  if (r) {
+    if (resumeSession(decodeURIComponent(r[1]))) { location.hash = '#/run'; return; }
+    app.innerHTML = `<div class="card"><p class="error">This session can't be continued. It may be finished, or it was saved before resuming was supported.</p>
+      <a class="btn" href="#/reviews">Back to reviews</a></div>`;
+    return;
+  }
   const m = path.match(/^\/review\/(.+)$/);
   if (m) return reviewSession(decodeURIComponent(m[1]));
   location.hash = '#/';
 }
 window.addEventListener('hashchange', route);
+
+// A saved session can be continued if it is unfinished and has what is needed to rebuild it.
+// Sessions saved before resuming existed have no queue or level state, so they can't be.
+function resumable(s) {
+  if (s.finished) return false;
+  if (s.mode === 'practice') return Array.isArray(s.queueIds) && s.queueIds.length > 0;
+  return !!s.state && Array.isArray(s.skills);
+}
+
+// Rebuilds the in-memory session from the saved record. Returns false if it can't.
+function resumeSession(id) {
+  const s = loadSessions().find((x) => x.id === id);
+  if (!s || !resumable(s)) return false;
+  const correct = s.records.filter((r) => r.correct).length;
+  if (s.mode === 'practice') {
+    const queue = s.queueIds.map((x) => byId.get(x)).filter(Boolean);
+    if (!queue.length) return false;
+    session = {
+      id: s.id, mode: 'practice', label: s.label, startedAt: s.startedAt, finished: false,
+      bands: s.bands || ['A', 'B'], queue,
+      index: s.records.length, // the next question is the first one not yet answered
+      correct,
+      missed: s.records.filter((r) => !r.correct).map((r) => byId.get(r.id)).filter(Boolean),
+      records: s.records.slice(),
+    };
+  } else {
+    const pool = bank.questions.filter((q) => q.answer && s.skills.includes(q.skill));
+    session = {
+      id: s.id, mode: 'adaptive', label: s.label, startedAt: s.startedAt, finished: false,
+      pool, state: s.state, skills: s.skills,
+      used: new Set(s.records.map((r) => r.id)),
+      total: s.total, answered: s.records.length, correct,
+      records: s.records.slice(),
+    };
+  }
+  return true;
+}
 
 // ----- home -----
 function home() {
@@ -98,11 +142,15 @@ function home() {
       return `${bank.bands[band]} ${SKILL_NAME[skill]}: ${n}`;
     })
     .join(' · ');
-  const sessions = loadSessions().length;
+  const saved = loadSessions();
+  const unfinished = saved.find(resumable);
   app.innerHTML = `
     <h1>TOCFL 模擬試題 Mock questions</h1>
     <p class="stat-line">${escapeHtml(counts)}</p>
-    <p class="stat-line">Your answers so far: ${s.total} (${pct(s.correct, s.total)}% correct) · Saved sessions: ${sessions}</p>
+    <p class="stat-line">Your answers so far: ${s.total} (${pct(s.correct, s.total)}% correct) · Saved sessions: ${saved.length}</p>
+    ${unfinished ? `<div class="card" style="margin-top:12px"><strong>Unfinished session</strong><br>
+      <span class="muted">${escapeHtml(unfinished.label || unfinished.mode)} · ${unfinished.records.length} answered</span>
+      <div class="row" style="margin-top:8px"><a class="btn primary" href="#/resume/${encodeURIComponent(unfinished.id)}">Continue</a></div></div>` : ''}
     <div class="grid" style="margin-top:16px">
       <a class="card" href="#/practice" style="text-decoration:none;color:inherit">
         <h2>1 · Select difficulty</h2>
@@ -234,7 +282,7 @@ function adaptiveSetup() {
     const total = Number(f.get('count'));
     session = {
       id: newId(), mode: 'adaptive', pool, state: createAdaptiveState(), used: new Set(),
-      total, answered: 0, correct: 0, startedAt: Date.now(), finished: false,
+      total, answered: 0, correct: 0, startedAt: Date.now(), finished: false, skills,
       label: `Adjust difficulty · ${skills.map((s) => SKILL_NAME[s]).join(' + ')} · ${total} questions`,
       records: [],
     };
@@ -244,17 +292,26 @@ function adaptiveSetup() {
 }
 
 // ----- saving the session as it goes -----
+// Saves the session so it can be reviewed and, if unfinished, continued.
 function persist() {
-  if (session) {
-    saveSession({
-      id: session.id,
-      mode: session.mode,
-      label: session.label,
-      startedAt: session.startedAt,
-      finished: session.finished,
-      records: session.records,
-    });
+  if (!session) return;
+  const saved = {
+    id: session.id,
+    mode: session.mode,
+    label: session.label,
+    startedAt: session.startedAt,
+    finished: session.finished,
+    records: session.records,
+  };
+  if (session.mode === 'practice') {
+    saved.bands = session.bands;
+    saved.queueIds = session.queue.map((q) => q.id);
+  } else {
+    saved.skills = session.skills;
+    saved.total = session.total;
+    saved.state = session.state;
   }
+  saveSession(saved);
 }
 
 function recordResult(q, res) {
@@ -378,7 +435,8 @@ function reviewsList() {
           ${s.finished ? '' : '<span class="tag">in progress</span>'}</div>
         <div class="muted">${escapeHtml(fmtDate(s.startedAt))} · ${correct} / ${total} correct (${pct(correct, total)}%)</div>
         <div class="row">
-          <a class="btn small" href="#/review/${encodeURIComponent(s.id)}">Open</a>
+          ${resumable(s) ? `<a class="btn small primary" href="#/resume/${encodeURIComponent(s.id)}">Continue</a>` : ''}
+          <a class="btn small" href="#/review/${encodeURIComponent(s.id)}">Review</a>
           <button class="btn small" type="button" data-del="${escapeHtml(s.id)}">Delete</button>
         </div>
       </li>`;
@@ -439,23 +497,33 @@ function reviewSession(id) {
     return;
   }
   const correct = s.records.filter((r) => r.correct).length;
-  const header = `
+  const wrap = document.createElement('section');
+  wrap.innerHTML = `
     <h1>Review</h1>
     <div class="card results">
       <p class="muted">${escapeHtml(s.label || s.mode)} · ${escapeHtml(fmtDate(s.startedAt))}</p>
       <div class="big">${correct} / ${s.records.length}</div>
       <p>${pct(correct, s.records.length)}% correct${s.finished ? '' : ' · session not finished'}</p>
+      ${resumable(s) ? `<a class="btn primary" href="#/resume/${encodeURIComponent(s.id)}">Continue this session</a>` : ''}
     </div>
-    <div class="row" style="margin-bottom:12px"><a class="btn" href="#/reviews">Back to reviews</a></div>`;
-  const wrap = document.createElement('section');
-  wrap.innerHTML = header;
+    <div class="row review-tools">
+      <label><input type="checkbox" id="only-wrong"> Show only wrong answers</label>
+      <a class="btn" href="#/reviews">Back to reviews</a>
+    </div>
+    <nav class="review-index">${s.records.map((r, i) =>
+      `<button type="button" class="chip ${r.correct ? 'ok' : 'bad'}" data-jump="${i}" aria-label="Question ${i + 1}">${i + 1}</button>`).join('')}</nav>`;
+
   s.records.forEach((rec, i) => {
     const q = byId.get(rec.id);
     const item = document.createElement('div');
+    item.className = 'review-item';
+    item.id = `q${i}`;
+    item.dataset.correct = String(!!rec.correct);
     if (!q) {
       item.innerHTML = `<p class="muted">Question ${i + 1} (${escapeHtml(rec.id)}) is not in the current question bank.</p>`;
     } else {
-      item.appendChild(el('p', 'progress', `Question ${i + 1} of ${s.records.length}`));
+      const yourAnswer = rec.revealed ? 'answer shown' : `your answer: ${rec.letter || '—'}`;
+      item.appendChild(el('p', 'progress', `Question ${i + 1} of ${s.records.length} · ${yourAnswer} · ${rec.correct ? 'correct' : 'wrong'}`));
       item.appendChild(questionCard(q, bank, null, {
         correct: rec.correct,
         letter: rec.letter,
@@ -463,6 +531,16 @@ function reviewSession(id) {
       }));
     }
     wrap.appendChild(item);
+  });
+
+  wrap.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => {
+    document.getElementById(`q${b.dataset.jump}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  const onlyWrong = wrap.querySelector('#only-wrong');
+  onlyWrong.addEventListener('change', () => {
+    wrap.querySelectorAll('.review-item').forEach((it) => {
+      it.hidden = onlyWrong.checked && it.dataset.correct === 'true';
+    });
   });
   currentCard = null;
   app.replaceChildren(wrap);
