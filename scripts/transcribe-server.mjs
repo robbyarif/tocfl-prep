@@ -20,7 +20,7 @@ const HOST = '127.0.0.1';
 const MODEL = process.env.TRANSCRIBE_MODEL || 'Xenova/whisper-small';
 const MAX_BYTES = 20 * 1024 * 1024;
 const TARGET_RATE = 16000;
-const CACHE_VERSION = 'q8-windowed-v2';
+const CACHE_VERSION = 'q8-overlap-v3';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE_DIR = path.join(ROOT, '.cache');
@@ -83,6 +83,19 @@ function resample(input, from, to) {
   return out;
 }
 
+// Joins the text of two overlapping windows. The longest run at the end of `prev` that
+// is also at the start of `next` is counted once. If there is no shared run, the two are
+// joined as they are (a possible repeat is better than a dropped sentence).
+function mergeSeam(prev, next) {
+  if (!prev) return next;
+  if (!next) return prev;
+  const max = Math.min(prev.length, next.length, 60);
+  for (let k = max; k >= 4; k--) {
+    if (prev.endsWith(next.slice(0, k))) return prev + next.slice(k);
+  }
+  return prev + next;
+}
+
 async function transcribeBuffer(buf) {
   // The version is part of the key so results from older server code (e.g. the
   // 30-second cut-off) are never returned. Bump it whenever the transcription changes.
@@ -96,14 +109,19 @@ async function transcribeBuffer(buf) {
   const asr = await getAsr();
   // Whisper only sees 30 s at a time. Split longer clips into 30 s windows
   // ourselves; the library's built-in chunking ran out of memory in Node.
+  // Windows overlap by 5 s so a sentence that falls on a cut is heard whole;
+  // the repeated text at each seam is removed when the pieces are joined.
   const WINDOW = TARGET_RATE * 30;
-  const parts = [];
-  for (let start = 0; start < audio.length; start += WINDOW) {
-    const slice = audio.subarray(start, Math.min(start + WINDOW, audio.length));
+  const STEP = TARGET_RATE * 25;
+  let text = '';
+  for (let start = 0; ; start += STEP) {
+    const end = Math.min(start + WINDOW, audio.length);
+    const slice = audio.subarray(start, end);
     const result = await asr(slice, { language: 'chinese', task: 'transcribe' });
-    parts.push(String(result.text || '').trim());
+    text = mergeSeam(text, String(result.text || '').trim());
+    if (end >= audio.length) break;
   }
-  const text = toTraditional(parts.join(''));
+  text = toTraditional(text);
   fs.writeFileSync(cachePath, JSON.stringify({ text }, null, 2));
   return { text, cached: false };
 }
