@@ -81,6 +81,14 @@ function imageBlock(page, bank, crop) {
   return { node: wrap, toggle };
 }
 
+// Transcript panel content. Machine transcripts (Whisper) are labelled as such.
+function transcriptHtml(page) {
+  const note = page.scriptSource === 'machine'
+    ? '<p class="muted note">Machine transcript (Whisper): may contain errors.</p>'
+    : '';
+  return note + zhHtml(page.script, getPinyinPref());
+}
+
 // Question text without choice lines and bare numbers (used when the item has no own stem).
 function pageStem(text) {
   return (text || '')
@@ -209,13 +217,13 @@ export function questionCard(q, bank, onAnswer, prior = null) {
     transcriptPanel = el('div', 'transcript');
     transcriptPanel.hidden = true;
     renderers.push(() => {
-      if (!transcriptPanel.hidden) transcriptPanel.innerHTML = zhHtml(page.script, getPinyinPref());
+      if (!transcriptPanel.hidden) transcriptPanel.innerHTML = transcriptHtml(page);
     });
     bindZhClicks(transcriptPanel, page.script, bank.dict);
     transcriptBtn.addEventListener('click', () => {
       transcriptPanel.hidden = !transcriptPanel.hidden;
       transcriptBtn.textContent = transcriptPanel.hidden ? 'Show transcript' : 'Hide transcript';
-      if (!transcriptPanel.hidden) transcriptPanel.innerHTML = zhHtml(page.script, getPinyinPref());
+      if (!transcriptPanel.hidden) transcriptPanel.innerHTML = transcriptHtml(page);
     });
   }
 

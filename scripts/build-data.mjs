@@ -341,6 +341,52 @@ function expandItems(page, meta) {
   return items;
 }
 
+// ---------- machine transcripts for listening pages without an official script ----------
+// Sends the MP3 to the local Whisper server (npm run transcribe). Results are cached in
+// .cache/machine and marked scriptSource: 'machine' so the app can label them.
+const TRANSCRIBE_URL = process.env.TRANSCRIBE_URL || 'http://127.0.0.1:8787';
+
+async function addMachineTranscripts(pageRecords) {
+  const targets = pageRecords.filter(({ job, page }) => job.answers.length && page.audio && !page.script && job.mp3);
+  if (!targets.length) return;
+  const up = await fetch(`${TRANSCRIBE_URL}/health`, { signal: AbortSignal.timeout(3000) })
+    .then((r) => r.ok).catch(() => false);
+  if (!up) {
+    console.log(`\n${targets.length} listening pages have no official script. Start the transcription server (npm run transcribe) and rebuild to fill them.`);
+    return;
+  }
+  console.log(`\nTranscribing ${targets.length} listening pages without an official script (Whisper, local)...`);
+  const cacheDir = path.join(CACHE, 'machine');
+  await fs.mkdir(cacheDir, { recursive: true });
+  let done = 0;
+  for (const { job, page } of targets) {
+    const cacheFile = path.join(cacheDir, `${job.id}.json`);
+    let text;
+    if (await exists(cacheFile)) {
+      text = JSON.parse(await fs.readFile(cacheFile, 'utf8')).text;
+    } else {
+      const res = await fetch(`${TRANSCRIBE_URL}/transcribe`, {
+        method: 'POST',
+        body: await fs.readFile(job.mp3),
+        signal: AbortSignal.timeout(15 * 60 * 1000),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || typeof body.text !== 'string') {
+        console.log(`  ${job.id}: transcription failed (${body.error || res.status})`);
+        continue;
+      }
+      text = cleanText(body.text);
+      await fs.writeFile(cacheFile, JSON.stringify({ text }));
+    }
+    if (text) {
+      page.script = text;
+      page.scriptSource = 'machine';
+    }
+    done++;
+    if (done % 10 === 0 || done === targets.length) console.log(`  ${done}/${targets.length}`);
+  }
+}
+
 // ---------- CC-CEDICT subset ----------
 async function buildDictionary(corpus) {
   // Every run of up to 8 CJK characters that appears in the bank.
@@ -434,6 +480,7 @@ async function main() {
     return { job, page };
   });
   await stopOcr();
+  await addMachineTranscripts(pageRecords);
 
   // Expand pages into questions. Pages with no answer key are skipped.
   const pages = {};
@@ -449,6 +496,7 @@ async function main() {
       text: page.text,
       words: page.words,
       script: page.script,
+      scriptSource: page.scriptSource || (page.script ? 'official' : null),
     };
     questions.push(...expandItems({ ...page, answers }, meta));
   }

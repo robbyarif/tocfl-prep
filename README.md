@@ -33,6 +33,7 @@ The build is incremental: downloads, extractions and OCR results are cached in `
 - OCR mistakes happen (e.g. 雨 and 兩 are often confused), and stray marks on picture pages are filtered out. Check against the image when in doubt.
 - Gap-filling and paragraph pages hold several numbered items; each item becomes its own question that shares the page.
 - Listening choices are often spoken and not printed, so they show as letters A–D when the text can't be read.
+- Some listening items have no official transcript in the archives. For those, the build sends the MP3 to the local Whisper server (`npm run transcribe`, started first) and stores the result, labelled "Machine transcript (Whisper): may contain errors" in the app. Without the server running, those items simply have no transcript and the build says so.
 - Dictionary: a subset of [CC-CEDICT](https://cc-cedict.org/) (CC BY-SA 4.0), limited to words that occur in the bank.
 - `public/data/` and `.cache/` are git-ignored. The question bank is published for non-commercial study use only; do not redistribute it.
 
