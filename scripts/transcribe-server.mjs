@@ -1,0 +1,202 @@
+// Local Whisper transcription server for the CATO listening userscript.
+//
+//   npm run transcribe
+//
+// Listens on 127.0.0.1 only. POST the raw mp3 bytes to /transcribe?key=<id>
+// and get back { text } in Traditional Chinese. Audio never leaves this machine.
+// GET /script?id=<question id> returns the listening script from the question bank
+// (public/data/questions.json), or 404 when the bank has none for that id.
+// The first request downloads the Whisper model into .cache/models/.
+
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { MPEGDecoder } from 'mpg123-decoder';
+import * as OpenCC from 'opencc-js';
+import { pipeline, env } from '@huggingface/transformers';
+
+const PORT = Number(process.env.TRANSCRIBE_PORT) || 8787;
+const HOST = '127.0.0.1';
+const MODEL = process.env.TRANSCRIBE_MODEL || 'Xenova/whisper-small';
+const MAX_BYTES = 20 * 1024 * 1024;
+const TARGET_RATE = 16000;
+const CACHE_VERSION = 'q8-overlap-v3';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const CACHE_DIR = path.join(ROOT, '.cache');
+const MODEL_DIR = path.join(CACHE_DIR, 'models');
+const TRANSCRIPT_DIR = path.join(CACHE_DIR, 'transcripts');
+fs.mkdirSync(MODEL_DIR, { recursive: true });
+fs.mkdirSync(TRANSCRIPT_DIR, { recursive: true });
+env.cacheDir = MODEL_DIR;
+
+const toTraditional = OpenCC.Converter({ from: 'cn', to: 'tw' });
+
+let asrPromise = null;
+function getAsr() {
+  if (!asrPromise) {
+    console.log(`[transcribe] loading ${MODEL} (first run downloads the model)…`);
+    // q8 (quantized) keeps memory low enough for Node; full fp32 ran out of memory.
+    asrPromise = pipeline('automatic-speech-recognition', MODEL, { dtype: 'q8' }).then(p => {
+      console.log('[transcribe] model ready');
+      return p;
+    });
+    asrPromise.catch(() => { asrPromise = null; });
+  }
+  return asrPromise;
+}
+
+// Decode mp3 to mono Float32 at 16 kHz (linear resampling is enough for speech).
+async function decodeMp3(buf) {
+  const decoder = new MPEGDecoder();
+  await decoder.ready;
+  try {
+    const { channelData, sampleRate } = decoder.decode(new Uint8Array(buf));
+    const mono = channelData.length === 1
+      ? channelData[0]
+      : mixDown(channelData);
+    return resample(mono, sampleRate, TARGET_RATE);
+  } finally {
+    decoder.free();
+  }
+}
+
+function mixDown(channels) {
+  const len = channels[0].length;
+  const out = new Float32Array(len);
+  for (const ch of channels) for (let i = 0; i < len; i++) out[i] += ch[i] / channels.length;
+  return out;
+}
+
+function resample(input, from, to) {
+  if (from === to) return input;
+  const ratio = from / to;
+  const outLen = Math.floor(input.length / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const pos = i * ratio;
+    const i0 = Math.floor(pos);
+    const i1 = Math.min(i0 + 1, input.length - 1);
+    const frac = pos - i0;
+    out[i] = input[i0] * (1 - frac) + input[i1] * frac;
+  }
+  return out;
+}
+
+// Joins the text of two overlapping windows. The longest run at the end of `prev` that
+// is also at the start of `next` is counted once. If there is no shared run, the two are
+// joined as they are (a possible repeat is better than a dropped sentence).
+function mergeSeam(prev, next) {
+  if (!prev) return next;
+  if (!next) return prev;
+  const max = Math.min(prev.length, next.length, 60);
+  for (let k = max; k >= 4; k--) {
+    if (prev.endsWith(next.slice(0, k))) return prev + next.slice(k);
+  }
+  return prev + next;
+}
+
+async function transcribeBuffer(buf) {
+  // The version is part of the key so results from older server code (e.g. the
+  // 30-second cut-off) are never returned. Bump it whenever the transcription changes.
+  const hash = crypto.createHash('sha1').update(CACHE_VERSION).update(buf).digest('hex');
+  const cachePath = path.join(TRANSCRIPT_DIR, hash + '.json');
+  if (fs.existsSync(cachePath)) {
+    return { text: JSON.parse(fs.readFileSync(cachePath, 'utf8')).text, cached: true };
+  }
+
+  const audio = await decodeMp3(buf);
+  const asr = await getAsr();
+  // Whisper only sees 30 s at a time. Split longer clips into 30 s windows
+  // ourselves; the library's built-in chunking ran out of memory in Node.
+  // Windows overlap by 5 s so a sentence that falls on a cut is heard whole;
+  // the repeated text at each seam is removed when the pieces are joined.
+  const WINDOW = TARGET_RATE * 30;
+  const STEP = TARGET_RATE * 25;
+  let text = '';
+  for (let start = 0; ; start += STEP) {
+    const end = Math.min(start + WINDOW, audio.length);
+    const slice = audio.subarray(start, end);
+    const result = await asr(slice, { language: 'chinese', task: 'transcribe' });
+    text = mergeSeam(text, String(result.text || '').trim());
+    if (end >= audio.length) break;
+  }
+  text = toTraditional(text);
+  fs.writeFileSync(cachePath, JSON.stringify({ text }, null, 2));
+  return { text, cached: false };
+}
+
+// The question bank written by `npm run build:data`. Loaded on first use; restart the server after a rebuild.
+const BANK_PATH = path.join(ROOT, 'public', 'data', 'questions.json');
+let bankPages = null;
+function loadBankPages() {
+  if (!bankPages) bankPages = JSON.parse(fs.readFileSync(BANK_PATH, 'utf8')).pages;
+  return bankPages;
+}
+
+// The listening script for a question ID from the bank (its "Listening Script" PDF, OCR'd at build time).
+function sendBankScript(res, id) {
+  if (!/^[A-Z]\d{8}$/.test(id)) return send(res, 400, { error: 'bad id' });
+  if (!fs.existsSync(BANK_PATH)) return send(res, 503, { error: 'question bank not built: run npm run build:data' });
+  const page = loadBankPages()[id];
+  if (!page || !page.script) return send(res, 404, { error: 'not in question bank' });
+  return send(res, 200, { text: page.script, source: 'bank' });
+}
+
+function send(res, status, body) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    // Allow the userscript (running on the CATO https page) to call this server.
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  });
+  res.end(JSON.stringify(body));
+}
+
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url, `http://${HOST}:${PORT}`);
+
+  if (req.method === 'OPTIONS') return send(res, 204, {});
+
+  if (req.method === 'GET' && url.pathname === '/health') {
+    return send(res, 200, { ok: true, model: MODEL });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/script') {
+    return sendBankScript(res, url.searchParams.get('id') || '');
+  }
+
+  if (req.method === 'POST' && url.pathname === '/transcribe') {
+    const chunks = [];
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > MAX_BYTES) {
+        send(res, 413, { error: 'audio too large' });
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', async () => {
+      if (size > MAX_BYTES) return;
+      try {
+        const { text, cached } = await transcribeBuffer(Buffer.concat(chunks));
+        send(res, 200, { text, cached });
+      } catch (err) {
+        console.error('[transcribe] failed:', err);
+        send(res, 500, { error: String(err && err.message || err) });
+      }
+    });
+    return;
+  }
+
+  send(res, 404, { error: 'not found' });
+});
+
+server.listen(PORT, HOST, () => {
+  console.log(`[transcribe] listening on http://${HOST}:${PORT}`);
+});
