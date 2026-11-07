@@ -1,0 +1,23 @@
+{
+  "name": "tocfl-prep",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Study app for the TOCFL mock question bank (Basic and Advanced bands)",
+  "type": "module",
+  "scripts": {
+    "build:data": "node scripts/build-data.mjs",
+    "build:data:quick": "node scripts/build-data.mjs --limit 20",
+    "dev": "node scripts/serve.mjs",
+    "transcribe": "node scripts/transcribe-server.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2",
+    "mpg123-decoder": "1.0.3",
+    "node-unrar-js": "2.0.2",
+    "opencc-js": "1.4.2",
+    "pinyin-pro": "3.29.5",
+    "sharp": "^0.34.0",
+    "tesseract.js": "7.0.0",
+    "xlsx": "0.18.5"
+  }
+}
