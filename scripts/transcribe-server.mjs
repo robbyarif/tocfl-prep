@@ -20,6 +20,7 @@ const HOST = '127.0.0.1';
 const MODEL = process.env.TRANSCRIBE_MODEL || 'Xenova/whisper-small';
 const MAX_BYTES = 20 * 1024 * 1024;
 const TARGET_RATE = 16000;
+const CACHE_VERSION = 'q8-windowed-v2';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE_DIR = path.join(ROOT, '.cache');
@@ -83,7 +84,9 @@ function resample(input, from, to) {
 }
 
 async function transcribeBuffer(buf) {
-  const hash = crypto.createHash('sha1').update(buf).digest('hex');
+  // The version is part of the key so results from older server code (e.g. the
+  // 30-second cut-off) are never returned. Bump it whenever the transcription changes.
+  const hash = crypto.createHash('sha1').update(CACHE_VERSION).update(buf).digest('hex');
   const cachePath = path.join(TRANSCRIPT_DIR, hash + '.json');
   if (fs.existsSync(cachePath)) {
     return { text: JSON.parse(fs.readFileSync(cachePath, 'utf8')).text, cached: true };

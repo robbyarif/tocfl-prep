@@ -15,6 +15,9 @@
   const PAUSE_CLASS = 'cato-pause-btn';
   const TRANSCRIPT_CLASS = 'cato-transcript-btn';
   const PANEL_CLASS = 'cato-transcript';
+  const TOOLBAR_CLASS = 'cato-toolbar';
+  // Distance from the top of the button row to the top of the buttons, in px.
+  const TOOLBAR_TOP_PX = 8;
   // Local transcription server (npm run transcribe in the project folder).
   const TRANSCRIBE_URL = 'http://127.0.0.1:8787/transcribe';
   const SERVER_HINT = 'Transcription server not running. Start it with: npm run transcribe';
@@ -85,7 +88,7 @@
   }
 
   const BUTTON_STYLE = [
-    'margin: 8px 0',
+    'margin: 0',
     'padding: 6px 14px',
     'font-size: 16px',
     'cursor: pointer',
@@ -166,17 +169,40 @@
     }
     btn.textContent = panel.hidden ? '📝' : '✖';
     btn.title = panel.hidden ? 'Transcript' : 'Hide transcript';
+    // Keep the overlay just below the button row, wherever the row sits on the page.
+    if (!panel.hidden) {
+      panel.style.top = (btn.getBoundingClientRect().bottom + 6) + 'px';
+    }
   }
 
   function addButton() {
     if (!findQuestionAudio()) return;
 
-    const heading = document.querySelector('h1, h2');
-    const parent = heading ? heading.parentNode : document.body;
-    // Insert after the heading, or at the top of the body if there is no heading.
-    let anchor = heading || null;
+    if (!document.querySelector('.' + TOOLBAR_CLASS)) {
+      const heading = document.querySelector('h1, h2');
+      const parent = heading ? heading.parentNode : document.body;
+      // Insert after the heading, or at the top of the body if there is no heading.
+      const anchorNode = heading ? heading.nextSibling : document.body.firstChild;
 
-    if (!document.querySelector('.' + BUTTON_CLASS)) {
+      // The wrapper has zero height and the buttons are absolutely positioned in it,
+      // so the buttons take no vertical space and nothing below them moves.
+      const wrap = document.createElement('div');
+      wrap.className = TOOLBAR_CLASS;
+      wrap.style.cssText = 'position: relative; height: 0; margin: 0; padding: 0; overflow: visible;';
+
+      const row = document.createElement('div');
+      row.style.cssText = [
+        'position: absolute',
+        'top: ' + TOOLBAR_TOP_PX + 'px',
+        'left: 50%',
+        'transform: translateX(-50%)',
+        'display: flex',
+        'gap: 6px',
+        'white-space: nowrap',
+        'z-index: 9999'
+      ].join(';');
+      wrap.appendChild(row);
+
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = BUTTON_CLASS;
@@ -189,11 +215,8 @@
         if (current) replay(current);
         else console.warn('[cato-replay] no question audio on the page');
       });
-      parent.insertBefore(btn, anchor ? anchor.nextSibling : document.body.firstChild);
-      anchor = btn;
-    }
+      row.appendChild(btn);
 
-    if (!document.querySelector('.' + PAUSE_CLASS)) {
       const pauseBtn = document.createElement('button');
       pauseBtn.type = 'button';
       pauseBtn.className = PAUSE_CLASS;
@@ -201,11 +224,8 @@
       pauseBtn.title = 'Pause';
       pauseBtn.style.cssText = BUTTON_STYLE;
       pauseBtn.addEventListener('click', togglePause);
-      parent.insertBefore(pauseBtn, anchor ? anchor.nextSibling : document.body.firstChild);
-    }
-    syncPauseLabel();
+      row.appendChild(pauseBtn);
 
-    if (!document.querySelector('.' + TRANSCRIPT_CLASS)) {
       const tBtn = document.createElement('button');
       tBtn.type = 'button';
       tBtn.className = TRANSCRIPT_CLASS;
@@ -213,11 +233,12 @@
       tBtn.title = 'Transcript';
       tBtn.style.cssText = BUTTON_STYLE;
       tBtn.addEventListener('click', toggleTranscript);
+      row.appendChild(tBtn);
 
+      // The panel is a fixed overlay, so it is placed outside the zero-height wrapper.
       const panel = document.createElement('div');
       panel.className = PANEL_CLASS;
       panel.hidden = true;
-      // Fixed overlay so opening the transcript doesn't push the question down.
       panel.style.cssText = [
         'position: fixed',
         'top: 110px',
@@ -238,15 +259,10 @@
         'user-select: text'
       ].join(';');
 
-      // Place the transcript button after the pause button (or replay, or the heading).
-      const pauseEl = document.querySelector('.' + PAUSE_CLASS);
-      const replayEl = document.querySelector('.' + BUTTON_CLASS);
-      const where = pauseEl || replayEl;
-      const host = where ? where.parentNode : parent;
-      const ref = where ? where.nextSibling : (heading ? heading.nextSibling : document.body.firstChild);
-      host.insertBefore(tBtn, ref);
-      host.insertBefore(panel, tBtn.nextSibling);
+      parent.insertBefore(wrap, anchorNode);
+      parent.insertBefore(panel, wrap.nextSibling);
     }
+    syncPauseLabel();
     syncTranscriptControls();
   }
 
