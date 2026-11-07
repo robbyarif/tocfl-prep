@@ -4,6 +4,12 @@
 // @version      0.6.0
 // @description  Adds Replay, Pause/Resume, a transcript (via a local Whisper server), a test metrics panel and drag-to-seek on the progress bar to the 華測會 CATO TOCFL test page for listening audio.
 // @match        https://cbt.sc-top.org.tw/cato/*
+// @match        https://cbt.sc-top.org.tw/sctopm/*
+// @match        https://cbt.sc-top.org.tw/sctop2m/*
+// @match        https://cbt.sc-top.org.tw/sctop3m/*
+// @match        http://cbt.sc-top.org.tw/sctopm/*
+// @match        http://cbt.sc-top.org.tw/sctop2m/*
+// @match        http://cbt.sc-top.org.tw/sctop3m/*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // ==/UserScript==
