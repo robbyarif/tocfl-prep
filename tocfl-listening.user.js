@@ -283,7 +283,7 @@
   const METRIC_FIELDS = [
     ['LabNum', 'Answered'],
     ['LabOrder', 'Position'],
-    ['LabNo', 'Item ID'],
+    ['TestNumber', 'Questions'],
     ['LabGroupHead', 'Passage ID'],
     ['LabTheta', 'θ (ability)'],
     ['LabB', 'b (difficulty)'],
@@ -306,8 +306,24 @@
     return out.trim();
   }
 
+  // The question numbers shown on the page, e.g. "5-10)" -> "5–10 (6 questions)", "18)" -> "18".
+  function questionRange() {
+    const el = document.getElementById('TestNumber');
+    if (!el) return 'n/a';
+    const text = el.textContent || '';
+    const range = /(\d+)\s*-\s*(\d+)/.exec(text);
+    if (range) {
+      const from = Number(range[1]);
+      const to = Number(range[2]);
+      return from + '–' + to + ' (' + (to - from + 1) + ' questions)';
+    }
+    const single = /(\d+)/.exec(text);
+    return single ? single[1] : '—';
+  }
+
   function readMetrics() {
     return METRIC_FIELDS.map(([id, label]) => {
+      if (id === 'TestNumber') return [label, questionRange()];
       const el = document.getElementById(id);
       return [label, el ? (ownText(el) || '—') : 'n/a'];
     });
@@ -401,8 +417,10 @@
   }
 
   function addButton() {
-    if (!findQuestionAudio()) return;
-
+    // The reading passage is loaded in an iframe. Only the main page and frames that hold a
+    // listening clip get a toolbar, so the iframe does not add a second metrics button.
+    if (window.top !== window.self && !questionClips().length) return;
+    // The toolbar is built on every CATO page, so the metrics button also shows on reading pages.
     if (!document.querySelector('.' + TOOLBAR_CLASS)) {
       const heading = document.querySelector('h1, h2');
       const parent = heading ? heading.parentNode : document.body;
@@ -540,6 +558,10 @@
       parent.insertBefore(wrap, anchorNode);
       parent.insertBefore(panel, wrap.nextSibling);
     }
+    // Replay, pause and transcript only apply to a listening clip; the metrics button is always shown.
+    const hasAudio = !!findQuestionAudio();
+    document.querySelectorAll('.' + BUTTON_CLASS + ', .' + PAUSE_CLASS + ', .' + TRANSCRIPT_CLASS)
+      .forEach(el => { el.style.display = hasAudio ? '' : 'none'; });
     syncPauseLabel();
     syncTranscriptControls();
     syncMetrics();
