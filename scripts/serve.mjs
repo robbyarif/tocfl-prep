@@ -28,8 +28,30 @@ http.createServer(async (req, res) => {
     const file = path.join(ROOT, path.normalize(rel));
     if (!file.startsWith(ROOT)) { res.writeHead(403).end(); return; }
     const data = await fs.readFile(file);
+    const type = TYPES[path.extname(file)] || 'application/octet-stream';
+    // Range support lets the browser seek inside audio (without it the MP3 is not seekable).
+    const range = req.headers.range && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+    if (range && data.length) {
+      let start = range[1] === '' ? Math.max(0, data.length - Number(range[2])) : Number(range[1]);
+      let end = range[2] === '' || range[1] === '' ? data.length - 1 : Math.min(Number(range[2]), data.length - 1);
+      if (start > end || start >= data.length) {
+        res.writeHead(416, { 'Content-Range': `bytes */${data.length}` }).end();
+        return;
+      }
+      res.writeHead(206, {
+        'Content-Type': type,
+        'Content-Length': end - start + 1,
+        'Content-Range': `bytes ${start}-${end}/${data.length}`,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache',
+      });
+      res.end(data.subarray(start, end + 1));
+      return;
+    }
     res.writeHead(200, {
-      'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream',
+      'Content-Type': type,
+      'Content-Length': data.length,
+      'Accept-Ranges': 'bytes',
       'Cache-Control': 'no-cache',
     });
     res.end(data);

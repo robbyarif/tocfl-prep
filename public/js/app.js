@@ -115,7 +115,7 @@ function resumeSession(id) {
     session = {
       id: s.id, mode: 'practice', label: s.label, startedAt: s.startedAt, finished: false,
       bands: s.bands || ['A', 'B'], queue,
-      index: s.records.length, // the next question is the first one not yet answered
+      index: Math.max(0, queue.findIndex((q) => !s.records.some((r) => r.id === q.id))),
       correct,
       missed: s.records.filter((r) => !r.correct).map((r) => byId.get(r.id)).filter(Boolean),
       records: s.records.slice(),
@@ -320,43 +320,96 @@ function recordResult(q, res) {
 }
 
 // ----- running a session -----
-function questionScreen(q, { header, banner, onAnswer, isLast }) {
+// One question on screen. `prior` shows an already-answered question read-only.
+// `nextLabel` is a string or a function returning the label for the button after answering.
+function questionScreen(q, { header, banner, nav, onAnswer, isLast, prior = null, nextLabel = null }) {
   const wrap = document.createElement('section');
   if (banner) wrap.insertAdjacentHTML('beforeend', banner);
+  if (nav) wrap.appendChild(nav);
   const top = document.createElement('p');
   top.className = 'progress';
-  top.textContent = header;
+  const headerText = () => (typeof header === 'function' ? header() : header);
+  top.textContent = headerText();
   wrap.appendChild(top);
 
-  const card = questionCard(q, bank, (res) => {
-    recordResult(q, res);
-    onAnswer(res.correct);
+  const addNext = () => {
+    const label = typeof nextLabel === 'function' ? nextLabel()
+      : (nextLabel || (isLast ? 'See results' : 'Next →'));
     const next = document.createElement('button');
     next.className = 'btn primary';
     next.type = 'button';
-    next.textContent = isLast ? 'See results' : 'Next →';
+    next.textContent = label;
     next.addEventListener('click', () => session.advance());
     wrap.appendChild(next);
     next.focus();
-  });
+  };
+
+  const card = questionCard(q, bank, prior ? null : (res) => {
+    recordResult(q, res);
+    onAnswer(res.correct);
+    top.textContent = headerText();
+    addNext();
+  }, prior);
   wrap.appendChild(card);
+  if (prior) addNext();
   currentCard = card;
   return wrap;
 }
 
-function renderPractice() {
-  if (session.index >= session.queue.length) return renderResults();
+// The next unanswered question after position i (wrapping), or i if all are answered.
+function nextUnansweredFrom(i, answered) {
   const total = session.queue.length;
+  for (let k = 1; k <= total; k++) {
+    const j = (i + k) % total;
+    if (!answered.has(session.queue[j].id)) return j;
+  }
+  return i;
+}
+
+// Number chips for every question in the practice session. Click one to jump to it.
+function practiceNav(answered) {
+  const nav = document.createElement('nav');
+  nav.className = 'review-index';
+  nav.innerHTML = session.queue.map((q, i) => {
+    const r = answered.get(q.id);
+    const cls = ['chip', r ? (r.correct ? 'ok' : 'bad') : '', i === session.index ? 'current' : ''].join(' ');
+    return `<button type="button" class="${cls}" data-jump="${i}" aria-label="Question ${i + 1}">${i + 1}</button>`;
+  }).join('');
+  nav.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => {
+    session.index = Number(b.dataset.jump);
+    renderPractice();
+  }));
+  const finish = document.createElement('button');
+  finish.type = 'button';
+  finish.className = 'btn small';
+  finish.textContent = 'Finish & see results';
+  finish.addEventListener('click', () => renderResults());
+  nav.appendChild(finish);
+  return nav;
+}
+
+function renderPractice() {
+  const total = session.queue.length;
+  const answered = new Map(session.records.map((r) => [r.id, r]));
   const q = session.queue[session.index];
+  const prior = answered.get(q.id);
   const screen = questionScreen(q, {
-    header: `Question ${session.index + 1} of ${total} · ${session.correct} correct so far`,
-    banner: session.index === 0 ? passBanner(session.bands) : '',
-    isLast: session.index === total - 1,
-    onAnswer(correct) {
-      if (correct) session.correct++; else session.missed.push(q);
+    header: () => {
+      const done = session.records.length;
+      const right = session.records.filter((r) => r.correct).length;
+      return `Question ${session.index + 1} of ${total} · ${done} answered · ${right} correct`;
     },
+    banner: session.index === 0 ? passBanner(session.bands) : '',
+    nav: practiceNav(answered),
+    prior: prior ? { correct: prior.correct, letter: prior.letter, revealed: prior.revealed } : null,
+    nextLabel: () => (session.records.length >= total ? 'See results' : 'Next →'),
+    onAnswer() {},
   });
-  session.advance = () => { session.index++; renderPractice(); };
+  session.advance = () => {
+    if (session.records.length >= total) return renderResults();
+    session.index = nextUnansweredFrom(session.index, new Map(session.records.map((r) => [r.id, r])));
+    renderPractice();
+  };
   app.replaceChildren(screen);
   window.scrollTo(0, 0);
 }
@@ -384,6 +437,12 @@ function renderAdaptive() {
 
 function renderResults() {
   const s = session;
+  if (s.mode === 'practice') {
+    // Practice results come from the answers given, not from the position in the queue.
+    s.correct = s.records.filter((r) => r.correct).length;
+    s.missed = s.records.filter((r) => !r.correct).map((r) => byId.get(r.id)).filter(Boolean);
+    s.index = s.records.length;
+  }
   let html;
   if (s.mode === 'practice') {
     const n = s.index;
@@ -392,7 +451,7 @@ function renderResults() {
       <div class="card results">
         <p class="muted">${escapeHtml(s.label)}</p>
         <div class="big">${s.correct} / ${n}</div>
-        <p>${pct(s.correct, n)}% correct</p>
+        <p>${pct(s.correct, n)}% correct${s.queue.length > n ? ` · ${s.queue.length - n} not answered` : ''}</p>
         ${s.missed.length ? `<h2>Missed</h2><ul class="missed">${s.missed.map((q) =>
           `<li>${escapeHtml(bank.bands[q.band])} · ${SKILL_NAME[q.skill]} · ${escapeHtml(q.type)} <span class="mono">${escapeHtml(q.id)}</span></li>`).join('')}</ul>` : ''}
       </div>

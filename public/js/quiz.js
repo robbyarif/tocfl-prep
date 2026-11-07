@@ -164,7 +164,36 @@ export function questionCard(q, bank, onAnswer, prior = null) {
     }
     speed.addEventListener('change', () => { audio.playbackRate = Number(speed.value); });
 
-    player.append(play, replay, speed, audio);
+    // Seek bar: drag to any point, with elapsed / total time.
+    const seek = el('input', 'seek');
+    seek.type = 'range';
+    seek.min = '0';
+    seek.max = '1000';
+    seek.step = '1';
+    seek.value = '0';
+    seek.setAttribute('aria-label', 'Playback position');
+    const time = el('span', 'muted mono time', '0:00 / 0:00');
+    const fmt = (s) => {
+      if (!isFinite(s) || s < 0) return '0:00';
+      return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    };
+    let scrubbing = false;
+    audio.addEventListener('loadedmetadata', () => { time.textContent = `0:00 / ${fmt(audio.duration)}`; });
+    audio.addEventListener('timeupdate', () => {
+      if (scrubbing || !audio.duration) return;
+      seek.value = String(Math.round((1000 * audio.currentTime) / audio.duration));
+      time.textContent = `${fmt(audio.currentTime)} / ${fmt(audio.duration)}`;
+    });
+    seek.addEventListener('input', () => {
+      scrubbing = true;
+      if (audio.duration) time.textContent = `${fmt((audio.duration * Number(seek.value)) / 1000)} / ${fmt(audio.duration)}`;
+    });
+    seek.addEventListener('change', () => {
+      if (audio.duration) audio.currentTime = (audio.duration * Number(seek.value)) / 1000;
+      scrubbing = false;
+    });
+
+    player.append(play, replay, speed, seek, time, audio);
     root.appendChild(player);
   }
 
@@ -180,8 +209,10 @@ export function questionCard(q, bank, onAnswer, prior = null) {
 
   // Choices: parsed choice text when available, otherwise letters only (listening choices are spoken).
   const choicesEl = el('div', 'choices');
+  // Show every letter up to the highest one OCR found, so a missed line still gets a button.
   const hasText = Array.isArray(q.options) && q.options.length >= 2;
-  const letters = hasText ? q.options.map((o) => o.k) : ['A', 'B', 'C', 'D'];
+  const highest = hasText ? Math.max(...q.options.map((o) => o.k.charCodeAt(0) - 65)) : 3;
+  const letters = 'ABCD'.slice(0, Math.max(highest + 1, 2)).split('');
   const buttons = {};
   for (const k of letters) {
     const opt = hasText ? q.options.find((o) => o.k === k) : null;

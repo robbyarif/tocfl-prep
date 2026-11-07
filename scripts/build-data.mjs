@@ -179,13 +179,30 @@ function keepUsefulLines(text) {
 }
 
 // Lettered choices in order of appearance: "（A）她知道今天會下大雨" -> { k: 'A', t: '她知道今天會下大雨' }.
+// OCR often adds a character inside the brackets ("(CO)" for "(C)", "(AA)"), so the letter is
+// read from the start of the bracket. A bracket with a misread letter ("(0C)") takes the next
+// letter in sequence. Numbers such as "(1)" are blanks in passages, not choices.
+const OPT_RE = /^[（(]\s*([A-D])[A-Za-z0-9]{0,2}\s*[)）]\s*(.+)$/;
+const OPT_JUNK_RE = /^[（(]\s*[0OoA-D]{1,3}\s*[)）]\s*(.+)$/;
 function parseOptions(text) {
   const opts = [];
   for (const line of text.split('\n')) {
-    const m = line.match(/^[（(]\s*([A-D])\s*[)）]\s*(.+)$/);
-    if (m) opts.push({ k: m[1], t: m[2].trim() });
+    const m = line.match(OPT_RE);
+    if (m) { opts.push({ k: m[1], t: m[2].trim() }); continue; }
+    const junk = line.match(OPT_JUNK_RE);
+    if (junk) {
+      const last = opts.length ? opts[opts.length - 1].k : null;
+      const k = last && last !== 'D' ? String.fromCharCode(last.charCodeAt(0) + 1) : 'A';
+      opts.push({ k, t: junk[1].trim() });
+    }
   }
   return opts;
+}
+
+// Choices for a page: from the page image's OCR text, otherwise from the listening script.
+function pageOptions(page) {
+  const fromText = parseOptions(page.text || '');
+  return fromText.length ? fromText : parseOptions(page.script || '');
 }
 
 // Splits a page's choices into one group per item: each group starts at an "A".
@@ -498,7 +515,7 @@ async function main() {
       script: page.script,
       scriptSource: page.scriptSource || (page.script ? 'official' : null),
     };
-    questions.push(...expandItems({ ...page, answers }, meta));
+    questions.push(...expandItems({ ...page, options: pageOptions(page), answers }, meta));
   }
   questions.sort((a, b) => a.id.localeCompare(b.id));
 
