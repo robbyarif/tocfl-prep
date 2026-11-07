@@ -4,6 +4,8 @@
 //
 // Listens on 127.0.0.1 only. POST the raw mp3 bytes to /transcribe?key=<id>
 // and get back { text } in Traditional Chinese. Audio never leaves this machine.
+// GET /script?id=<question id> returns the listening script from the question bank
+// (public/data/questions.json), or 404 when the bank has none for that id.
 // The first request downloads the Whisper model into .cache/models/.
 
 import http from 'node:http';
@@ -126,6 +128,23 @@ async function transcribeBuffer(buf) {
   return { text, cached: false };
 }
 
+// The question bank written by `npm run build:data`. Loaded on first use; restart the server after a rebuild.
+const BANK_PATH = path.join(ROOT, 'public', 'data', 'questions.json');
+let bankPages = null;
+function loadBankPages() {
+  if (!bankPages) bankPages = JSON.parse(fs.readFileSync(BANK_PATH, 'utf8')).pages;
+  return bankPages;
+}
+
+// The listening script for a question ID from the bank (its "Listening Script" PDF, OCR'd at build time).
+function sendBankScript(res, id) {
+  if (!/^[A-Z]\d{8}$/.test(id)) return send(res, 400, { error: 'bad id' });
+  if (!fs.existsSync(BANK_PATH)) return send(res, 503, { error: 'question bank not built: run npm run build:data' });
+  const page = loadBankPages()[id];
+  if (!page || !page.script) return send(res, 404, { error: 'not in question bank' });
+  return send(res, 200, { text: page.script, source: 'bank' });
+}
+
 function send(res, status, body) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -144,6 +163,10 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/health') {
     return send(res, 200, { ok: true, model: MODEL });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/script') {
+    return sendBankScript(res, url.searchParams.get('id') || '');
   }
 
   if (req.method === 'POST' && url.pathname === '/transcribe') {
