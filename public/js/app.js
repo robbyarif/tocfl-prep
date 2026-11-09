@@ -147,6 +147,7 @@ function home() {
   app.innerHTML = `
     <h1>TOCFL 模擬試題 Mock questions</h1>
     <p class="stat-line">${escapeHtml(counts)}</p>
+    ${bank.excluded ? `<p class="stat-line">${bank.excluded} questions are left out: their question pictures are not published by TOCFL.</p>` : ''}
     <p class="stat-line">Your answers so far: ${s.total} (${pct(s.correct, s.total)}% correct) · Saved sessions: ${saved.length}</p>
     ${unfinished ? `<div class="card" style="margin-top:12px"><strong>Unfinished session</strong><br>
       <span class="muted">${escapeHtml(unfinished.label || unfinished.mode)} · ${unfinished.records.length} answered</span>
@@ -618,7 +619,7 @@ paintPinyinButton();
 loadBank()
   .then((b) => {
     bank = b;
-    byId = new Map(bank.questions.map((q) => [q.id, q]));
+    byId = new Map(bank.allQuestions.map((q) => [q.id, q]));
     route();
     // pinyin-pro loads from the CDN; the app works without it.
     return loadPinyin();
