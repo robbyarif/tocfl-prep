@@ -227,6 +227,7 @@ ruby.zh rt { font-size: 0.5em; color: var(--muted); }
 .pass p { margin: 6px 0 0; font-size: 14px; }
 .review-list { list-style: none; padding: 0; margin: 0; }
 .review-row .row { margin-top: 8px; }
+.resume-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .review-tools { margin-bottom: 12px; align-items: center; justify-content: space-between; }
 .review-index { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
 .chip { min-width: 36px; min-height: 32px; font: inherit; border-radius: 6px; border: 2px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; }

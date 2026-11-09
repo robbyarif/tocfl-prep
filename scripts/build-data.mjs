@@ -145,15 +145,31 @@ async function loadAnswers(file) {
     for (const r of rows.slice(h + 1)) {
       const id = String(r[idCol] ?? '').trim().toUpperCase();
       let ans = String(r[ansCol] ?? '').trim().toUpperCase();
-      if (/^[1-4]$/.test(ans)) ans = 'ABCD'[Number(ans) - 1];
+      // Paragraph completion uses choices A-F; the other types use A-D.
+      if (/^[1-6]$/.test(ans)) ans = 'ABCDEF'[Number(ans) - 1];
       if (/^[A-Z]\d{8}$/.test(id)) {
         current = id;
         if (!map.has(id)) map.set(id, []);
       }
-      if (current && /^[A-D]$/.test(ans)) map.get(current).push(ans);
+      if (current && /^[A-F]$/.test(ans)) map.get(current).push(ans);
     }
   }
   return map;
+}
+
+// Text layer of a PDF, when it has one (many TOCFL PDFs are Word exports with real text).
+// `pdftotext -raw` keeps the Chinese; the default mode drops most of it. Returns '' if none.
+async function layerText(pdf) {
+  try {
+    const { stdout } = await execFileP('pdftotext', ['-raw', '-enc', 'UTF-8', pdf, '-']);
+    return stdout
+      .split('\n')
+      .map((l) => l.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n');
+  } catch {
+    return '';
+  }
 }
 
 // Drops the spaces tesseract puts between CJK characters and tidies the rest.
@@ -182,8 +198,8 @@ function keepUsefulLines(text) {
 // OCR often adds a character inside the brackets ("(CO)" for "(C)", "(AA)"), so the letter is
 // read from the start of the bracket. A bracket with a misread letter ("(0C)") takes the next
 // letter in sequence. Numbers such as "(1)" are blanks in passages, not choices.
-const OPT_RE = /^[（(]\s*([A-D])[A-Za-z0-9]{0,2}\s*[)）]\s*(.+)$/;
-const OPT_JUNK_RE = /^[（(]\s*[0OoA-D]{1,3}\s*[)）]\s*(.+)$/;
+const OPT_RE = /^[（(]\s*([A-F])[A-Za-z0-9]{0,2}\s*[)）]\s*(.+)$/;
+const OPT_JUNK_RE = /^[（(]\s*[0OoA-F]{1,3}\s*[)）]\s*(.+)$/;
 function parseOptions(text) {
   const opts = [];
   for (const line of text.split('\n')) {
@@ -192,7 +208,7 @@ function parseOptions(text) {
     const junk = line.match(OPT_JUNK_RE);
     if (junk) {
       const last = opts.length ? opts[opts.length - 1].k : null;
-      const k = last && last !== 'D' ? String.fromCharCode(last.charCodeAt(0) + 1) : 'A';
+      const k = last && last !== 'F' ? String.fromCharCode(last.charCodeAt(0) + 1) : 'A';
       opts.push({ k, t: junk[1].trim() });
     }
   }
@@ -215,10 +231,11 @@ function splitGroups(opts) {
   return groups;
 }
 
-// A choice list is usable only if it has 2-4 distinct letters.
-function usableOptions(opts) {
+// A choice list is usable only if it has 2 to `max` distinct letters (4 for A-D items,
+// 6 for a shared paragraph list).
+function usableOptions(opts, max = 4) {
   const letters = opts.map((o) => o.k);
-  return opts.length >= 2 && opts.length <= 4 && new Set(letters).size === letters.length;
+  return opts.length >= 2 && opts.length <= max && new Set(letters).size === letters.length;
 }
 
 // ---------- OCR ----------
@@ -305,27 +322,50 @@ async function buildPage({ id, band, skill, type, answers, pdfPage, pdfScript, m
 // Vertical band (0..1 of page height) of each numbered item on a multi-item page, found from
 // the number tokens' word boxes. Returns null unless every number is found in reading order;
 // the client then shows the whole page instead of a crop.
+// Numbers sit at the left margin; numbers inside the picture (signs, prices) do not.
+const MARGIN_X = 0.12;
 function itemBands(words, n) {
   const tops = [];
   let after = 0;
   for (let k = 1; k <= n; k++) {
     const re = new RegExp(`^${k}[.．]?$|^${k}[.．]`);
-    const w = words.find((x) => x.y >= after && re.test(x.t));
+    const w = words.find((x) => x.x < MARGIN_X && x.y >= after && re.test(x.t));
     if (!w) return null;
     tops.push(w.y);
     after = w.y + 0.001;
   }
-  return tops.map((y0, k) => ({
+  const bands = tops.map((y0, k) => ({
     y0: Math.max(0, +(y0 - 0.004).toFixed(4)),
     y1: +(k + 1 < n ? tops[k + 1] - 0.004 : 1).toFixed(4),
   }));
+  // The shared picture above the first item (for gap-filling pages).
+  const picture = tops[0] > 0.05 ? { y0: 0, y1: +(tops[0] - 0.006).toFixed(4) } : null;
+  return { bands, picture };
+}
+
+// Manual OCR corrections (data/ocr-fixes.json), applied to the page text, transcript and word
+// boxes. Runs after the OCR cache, so fixes do not need a new OCR pass.
+const FIXES_FILE = path.join(ROOT, 'data', 'ocr-fixes.json');
+async function loadFixes() {
+  if (!(await exists(FIXES_FILE))) return {};
+  const { _about, ...fixes } = JSON.parse(await fs.readFile(FIXES_FILE, 'utf8'));
+  return fixes;
+}
+function applyFixes(page, pairs) {
+  for (const [wrong, right] of pairs) {
+    const re = new RegExp(wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+    page.text = (page.text || '').replace(re, right);
+    if (page.script) page.script = page.script.replace(re, right);
+    for (const w of page.words || []) if (w.t.includes(wrong)) w.t = w.t.replace(re, right);
+  }
 }
 
 // Turns one page into one question per answered item.
 function expandItems(page, meta) {
   const n = page.answers.length;
   const groups = splitGroups(page.options);
-  const bands = n > 1 && groups.length === n ? itemBands(page.words || [], n) : null;
+  // Item bands come from the numbers on the page, so they work even when OCR lost the choices.
+  const layout = n > 1 && meta.type === 'Gap Filling' ? itemBands(page.words || [], n) : null;
   const items = [];
   page.answers.forEach((answer, k) => {
     let options = [];
@@ -339,9 +379,16 @@ function expandItems(page, meta) {
       stem = line ? line.replace(new RegExp(`^${k + 1}[.．]\\s*`), '') : null;
     } else {
       // One shared choice list for all blanks (paragraph completion); the passage is the stem.
-      options = usableOptions(page.options) ? page.options : [];
+      options = usableOptions(page.options, 6) ? page.options : [];
     }
+    // How many choice buttons to show. With text choices: at least 3, and enough to cover the
+    // highest letter found and the answer (OCR can lose the last line, as in "(C)"). Without
+    // text choices (spoken or picture choices): 4 as before.
+    const answerIndex = answer.charCodeAt(0) - 65;
+    const highest = options.length ? Math.max(...options.map((o) => o.k.charCodeAt(0) - 65)) : -1;
+    const choices = options.length ? Math.max(3, highest + 1, answerIndex + 1) : Math.max(4, answerIndex + 1);
     items.push({
+      choices,
       id: n === 1 ? meta.id : `${meta.id}-${k + 1}`,
       pageId: meta.id,
       band: meta.band,
@@ -352,7 +399,8 @@ function expandItems(page, meta) {
       count: n,
       stem,
       options,
-      crop: bands ? bands[k] : null,
+      crop: layout ? layout.bands[k] : null,
+      picture: layout ? layout.picture : null,
     });
   });
   return items;
@@ -502,8 +550,19 @@ async function main() {
   // Expand pages into questions. Pages with no answer key are skipped.
   const pages = {};
   const questions = [];
+  const fixes = await loadFixes();
   for (const { job, page } of pageRecords) {
     if (job.answers.length === 0) continue;
+    // Prefer the PDF's own text over OCR (OCR is used only where there is no text layer).
+    if (job.pdfPage) {
+      const t = await layerText(job.pdfPage);
+      if (cjkCount(t) >= 3) page.text = keepUsefulLines(t);
+    }
+    if (job.pdfScript) {
+      const s = await layerText(job.pdfScript);
+      if (cjkCount(s) >= 3) page.script = s;
+    }
+    if (fixes[page.id]) applyFixes(page, fixes[page.id]);
     const { answers, ...meta } = job;
     pages[page.id] = {
       image: page.image,

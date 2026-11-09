@@ -1,0 +1,13 @@
+{
+  "_about": "Manual OCR corrections, keyed by page ID. Each pair is [wrong, right]. Applied by scripts/build-data.mjs to the page text, transcript and word boxes. Add a pair after checking the page image.",
+  "Q01170200": [
+    ["取近", "最近"],
+    ["太系", "太累"],
+    ["希誼", "希望"]
+  ],
+  "Q01030600": [
+    ["金子", "盒子"],
+    ["催子", "筷子"],
+    ["又子", "叉子"]
+  ]
+}

@@ -90,6 +90,14 @@ function route() {
       <a class="btn" href="#/reviews">Back to reviews</a></div>`;
     return;
   }
+  const t = path.match(/^\/retake\/(.+)$/);
+  if (t) {
+    const s = loadSessions().find((x) => x.id === decodeURIComponent(t[1]));
+    if (s && startRetake(s)) { location.hash = '#/run'; return; }
+    app.innerHTML = `<div class="card"><p class="error">This session can't be retaken. Its question list was saved before retaking was supported.</p>
+      <a class="btn" href="#/reviews">Back to reviews</a></div>`;
+    return;
+  }
   const m = path.match(/^\/review\/(.+)$/);
   if (m) return reviewSession(decodeURIComponent(m[1]));
   location.hash = '#/';
@@ -102,6 +110,35 @@ function resumable(s) {
   if (s.finished) return false;
   if (s.mode === 'practice') return Array.isArray(s.queueIds) && s.queueIds.length > 0;
   return !!s.state && Array.isArray(s.skills);
+}
+
+// A saved session can be retaken if it has the question list (practice) or the skill setup (adaptive).
+function canRetake(s) {
+  return s.mode === 'practice' ? Array.isArray(s.queueIds) && s.queueIds.length > 0 : Array.isArray(s.skills);
+}
+
+// Starts a new session with the same questions (practice keeps the same order) or the same setup
+// (adjust difficulty). The old session is left as it is.
+function startRetake(s) {
+  if (!canRetake(s)) return false;
+  const label = `Retake · ${s.label || s.mode}`;
+  if (s.mode === 'practice') {
+    const queue = s.queueIds.map((x) => byId.get(x)).filter(Boolean);
+    if (!queue.length) return false;
+    session = {
+      id: newId(), mode: 'practice', label, startedAt: Date.now(), finished: false,
+      bands: s.bands || ['A', 'B'], queue, index: 0, correct: 0, missed: [], records: [],
+    };
+  } else {
+    const pool = bank.questions.filter((q) => q.answer && s.skills.includes(q.skill));
+    session = {
+      id: newId(), mode: 'adaptive', label, startedAt: Date.now(), finished: false,
+      pool, state: createAdaptiveState(), skills: s.skills, used: new Set(),
+      total: s.total, answered: 0, correct: 0, records: [],
+    };
+  }
+  persist();
+  return true;
 }
 
 // Rebuilds the in-memory session from the saved record. Returns false if it can't.
@@ -143,15 +180,17 @@ function home() {
     })
     .join(' · ');
   const saved = loadSessions();
-  const unfinished = saved.find(resumable);
+  const unfinished = saved.filter(resumable);
   app.innerHTML = `
     <h1>TOCFL 模擬試題 Mock questions</h1>
     <p class="stat-line">${escapeHtml(counts)}</p>
     ${bank.excluded ? `<p class="stat-line">${bank.excluded} questions are left out: their question pictures are not published by TOCFL.</p>` : ''}
     <p class="stat-line">Your answers so far: ${s.total} (${pct(s.correct, s.total)}% correct) · Saved sessions: ${saved.length}</p>
-    ${unfinished ? `<div class="card" style="margin-top:12px"><strong>Unfinished session</strong><br>
-      <span class="muted">${escapeHtml(unfinished.label || unfinished.mode)} · ${unfinished.records.length} answered</span>
-      <div class="row" style="margin-top:8px"><a class="btn primary" href="#/resume/${encodeURIComponent(unfinished.id)}">Continue</a></div></div>` : ''}
+    ${unfinished.length ? `<div class="card" style="margin-top:12px"><strong>Unfinished sessions (${unfinished.length})</strong>
+      <ul class="review-list">${unfinished.map((s) => `
+        <li class="resume-row"><span>${escapeHtml(s.label || s.mode)} <span class="muted">· ${s.records.length} answered · ${escapeHtml(fmtDate(s.startedAt))}</span></span>
+          <a class="btn small primary" href="#/resume/${encodeURIComponent(s.id)}">Continue</a></li>`).join('')}</ul>
+      <a class="btn small" href="#/reviews">All sessions</a></div>` : ''}
     <div class="grid" style="margin-top:16px">
       <a class="card" href="#/practice" style="text-decoration:none;color:inherit">
         <h2>1 · Select difficulty</h2>
@@ -296,13 +335,18 @@ function adaptiveSetup() {
 // Saves the session so it can be reviewed and, if unfinished, continued.
 function persist() {
   if (!session) return;
+  // The same session can be open in two tabs. Keep the answers saved by the other tab too,
+  // and let this tab's answers win for the questions it answered.
+  const stored = loadSessions().find((x) => x.id === session.id);
+  const merged = new Map((stored?.records || []).map((r) => [r.id, r]));
+  for (const r of session.records) merged.set(r.id, r);
   const saved = {
     id: session.id,
     mode: session.mode,
     label: session.label,
     startedAt: session.startedAt,
     finished: session.finished,
-    records: session.records,
+    records: [...merged.values()],
   };
   if (session.mode === 'practice') {
     saved.bands = session.bands;
@@ -497,6 +541,7 @@ function reviewsList() {
         <div class="row">
           ${resumable(s) ? `<a class="btn small primary" href="#/resume/${encodeURIComponent(s.id)}">Continue</a>` : ''}
           <a class="btn small" href="#/review/${encodeURIComponent(s.id)}">Review</a>
+          ${canRetake(s) ? `<a class="btn small" href="#/retake/${encodeURIComponent(s.id)}">Retake</a>` : ''}
           <button class="btn small" type="button" data-del="${escapeHtml(s.id)}">Delete</button>
         </div>
       </li>`;

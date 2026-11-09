@@ -69,16 +69,8 @@ function imageBlock(page, bank, crop) {
   });
 
   inner.appendChild(layer);
-  const toggle = el('button', 'btn small', 'Hanzi overlay: off');
-  toggle.type = 'button';
-  toggle.setAttribute('aria-pressed', 'false');
-  toggle.addEventListener('click', () => {
-    const on = !layer.classList.contains('on');
-    layer.classList.toggle('on', on);
-    toggle.textContent = `Hanzi overlay: ${on ? 'on' : 'off'}`;
-    toggle.setAttribute('aria-pressed', String(on));
-  });
-  return { node: wrap, toggle };
+  // The card's "Hanzi overlay" toggle switches every layer shown for the question.
+  return { node: wrap, layer };
 }
 
 // English text (no pinyin, no lookup: the lookup dictionary is for Chinese).
@@ -133,13 +125,32 @@ export function questionCard(q, bank, onAnswer, prior = null) {
   ].join('');
   root.appendChild(tags);
 
-  // Page image
+  // Page image. Gap-filling items show the shared picture above their own band of the page.
   if (page.image) {
+    const area = el('div', 'image-area');
+    const layers = [];
+    if (q.picture) {
+      const pic = imageBlock(page, bank, q.picture);
+      area.appendChild(pic.node);
+      if (pic.layer) layers.push(pic.layer);
+    }
     const block = imageBlock(page, bank, q.crop);
-    root.appendChild(block.node);
-    if (block.toggle) {
+    area.appendChild(block.node);
+    if (block.layer) layers.push(block.layer);
+    root.appendChild(area);
+
+    if (layers.length) {
+      const toggle = el('button', 'btn small', 'Hanzi overlay: off');
+      toggle.type = 'button';
+      toggle.setAttribute('aria-pressed', 'false');
+      toggle.addEventListener('click', () => {
+        const on = !layers[0].classList.contains('on');
+        layers.forEach((l) => l.classList.toggle('on', on));
+        toggle.textContent = `Hanzi overlay: ${on ? 'on' : 'off'}`;
+        toggle.setAttribute('aria-pressed', String(on));
+      });
       const row = el('div', 'row');
-      row.appendChild(block.toggle);
+      row.appendChild(toggle);
       root.appendChild(row);
     }
   }
@@ -223,10 +234,10 @@ export function questionCard(q, bank, onAnswer, prior = null) {
 
   // Choices: parsed choice text when available, otherwise letters only (listening choices are spoken).
   const choicesEl = el('div', 'choices');
-  // Show every letter up to the highest one OCR found, so a missed line still gets a button.
+  // The build stores how many choices the item has (at least enough for its answer), so a
+  // choice that OCR missed still gets a button.
   const hasText = Array.isArray(q.options) && q.options.length >= 2;
-  const highest = hasText ? Math.max(...q.options.map((o) => o.k.charCodeAt(0) - 65)) : 3;
-  const letters = 'ABCD'.slice(0, Math.max(highest + 1, 2)).split('');
+  const letters = 'ABCDEF'.slice(0, q.choices || 4).split('');
   const buttons = {};
   for (const k of letters) {
     const opt = hasText ? q.options.find((o) => o.k === k) : null;
