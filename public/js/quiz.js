@@ -81,6 +81,11 @@ function imageBlock(page, bank, crop) {
   return { node: wrap, toggle };
 }
 
+// English text (no pinyin, no lookup: the lookup dictionary is for Chinese).
+function enHtml(text) {
+  return escapeHtml(text).replace(/\n/g, '<br>');
+}
+
 // Transcript panel content. Machine transcripts (Whisper) are labelled as such.
 function transcriptHtml(page) {
   const note = page.scriptSource === 'machine'
@@ -107,6 +112,15 @@ export function questionCard(q, bank, onAnswer, prior = null) {
   const root = el('article', 'card');
   const renderers = [];
   let answered = false;
+
+  // Chinese or English view. English is a sentence-level machine translation, line by line.
+  const tr = bank.translations || {};
+  const trText = (text) => text.split('\n').map((l) => tr[l.trim()] || l).join('\n');
+  const view = { en: false };
+  const textHtml = (text) => (view.en ? enHtml(trText(text)) : zhHtml(text, getPinyinPref()));
+  const scriptHtml = () => (view.en ? enHtml(trText(page.script)) : transcriptHtml(page));
+  const hasEnglish = [q.stem, page.script, ...(q.options || []).map((o) => o.t)]
+    .some((t) => t && trText(t) !== t);
 
   // Tags
   const tags = el('div', 'tags');
@@ -202,7 +216,7 @@ export function questionCard(q, bank, onAnswer, prior = null) {
   const stemText = q.crop ? null : (q.stem || pageStem(page.text));
   if (stemText) {
     const stem = el('div', 'stem');
-    renderers.push(() => { stem.innerHTML = zhHtml(stemText, getPinyinPref()); });
+    renderers.push(() => { stem.innerHTML = textHtml(stemText); });
     bindZhClicks(stem, stemText, bank.dict);
     root.appendChild(stem);
   }
@@ -223,7 +237,7 @@ export function questionCard(q, bank, onAnswer, prior = null) {
     b.appendChild(label);
     if (opt) {
       renderers.push(() => {
-        label.innerHTML = `<strong>${k}.</strong> ${zhHtml(opt.t, getPinyinPref())}`;
+        label.innerHTML = `<strong>${k}.</strong> ${textHtml(opt.t)}`;
       });
       bindZhClicks(label, opt.t, bank.dict);
     } else {
@@ -248,13 +262,13 @@ export function questionCard(q, bank, onAnswer, prior = null) {
     transcriptPanel = el('div', 'transcript');
     transcriptPanel.hidden = true;
     renderers.push(() => {
-      if (!transcriptPanel.hidden) transcriptPanel.innerHTML = transcriptHtml(page);
+      if (!transcriptPanel.hidden) transcriptPanel.innerHTML = scriptHtml();
     });
     bindZhClicks(transcriptPanel, page.script, bank.dict);
     transcriptBtn.addEventListener('click', () => {
       transcriptPanel.hidden = !transcriptPanel.hidden;
       transcriptBtn.textContent = transcriptPanel.hidden ? 'Show transcript' : 'Hide transcript';
-      if (!transcriptPanel.hidden) transcriptPanel.innerHTML = transcriptHtml(page);
+      if (!transcriptPanel.hidden) transcriptPanel.innerHTML = scriptHtml();
     });
   }
 
@@ -268,6 +282,19 @@ export function questionCard(q, bank, onAnswer, prior = null) {
   });
   actions.appendChild(reveal);
   if (transcriptBtn) actions.appendChild(transcriptBtn);
+  if (hasEnglish) {
+    const enBtn = el('button', 'btn small', 'English: off');
+    enBtn.type = 'button';
+    enBtn.setAttribute('aria-pressed', 'false');
+    enBtn.title = 'Machine translation of the text, line by line';
+    enBtn.addEventListener('click', () => {
+      view.en = !view.en;
+      enBtn.textContent = `English: ${view.en ? 'on' : 'off'}`;
+      enBtn.setAttribute('aria-pressed', String(view.en));
+      renderers.forEach((fn) => fn());
+    });
+    actions.appendChild(enBtn);
+  }
 
   const feedback = el('p', 'feedback');
   feedback.setAttribute('aria-live', 'polite');

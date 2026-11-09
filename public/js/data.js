@@ -12,7 +12,9 @@ export function loadBank() {
     bankPromise = Promise.all([
       fetchJson('data/questions.json'),
       fetchJson('data/dict.json'),
-    ]).then(([q, dict]) => {
+      // Optional: the app works without English translations.
+      fetchJson('data/translations.json').catch(() => ({ lines: {} })),
+    ]).then(([q, dict, tr]) => {
       // A question is playable only if its page (picture or audio) is in the source. Some
       // answer keys list questions whose PDF TOCFL does not publish; those are left out of
       // sessions. allQuestions keeps them so saved sessions can still be reviewed.
@@ -34,6 +36,7 @@ export function loadBank() {
         counts,
         excluded: q.questions.length - questions.length,
         dict,
+        translations: tr.lines || {},
         generatedAt: q.generatedAt,
       };
     });

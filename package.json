@@ -8,6 +8,7 @@
     "build:data": "node scripts/build-data.mjs",
     "build:data:quick": "node scripts/build-data.mjs --limit 20",
     "dev": "node scripts/serve.mjs",
+    "translate": "node scripts/translate-data.mjs",
     "transcribe": "node scripts/transcribe-server.mjs"
   },
   "dependencies": {
