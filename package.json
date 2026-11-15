@@ -9,6 +9,8 @@
     "build:data:quick": "node scripts/build-data.mjs --limit 20",
     "dev": "node scripts/serve.mjs",
     "translate": "node scripts/translate-data.mjs",
+    "build:booklet": "node scripts/build-booklet.mjs",
+    "build:analysis": "node scripts/analyze-words.mjs",
     "transcribe": "node scripts/transcribe-server.mjs"
   },
   "dependencies": {

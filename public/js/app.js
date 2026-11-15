@@ -8,6 +8,9 @@ import {
   loadSessions, saveSession, deleteSession, importSessions,
 } from './store.js';
 import { createAdaptiveState, applyAnswer, estimateLevel, pickQuestion } from './adaptive.js';
+import { bookletHome } from './booklet.js';
+import { analysisPage, refreshAnalysis } from './analysis.js';
+import { occurrencesPage, refreshOccurrences } from './occurrences.js';
 
 // Official passing scores (通過標準) from tocfl.edu.tw, on the scaled score out of 80.
 // Question counts are not published, so a raw "questions to pass" figure cannot be given.
@@ -29,6 +32,7 @@ let bank = null;
 let byId = null;           // question id -> question
 let session = null;        // running practice or adaptive session
 let currentCard = null;    // question card on screen (refreshed by the pinyin toggle)
+let currentCards = [];     // all cards of a continuous practice page (refreshed by the pinyin toggle)
 
 const shuffle = (arr) => {
   const a = arr.slice();
@@ -69,6 +73,9 @@ pinyinBtn.addEventListener('click', () => {
   setPinyinPref(!getPinyinPref());
   paintPinyinButton();
   if (currentCard) currentCard.refresh();
+  currentCards.forEach((c) => c.refresh());
+  refreshAnalysis();
+  refreshOccurrences();
 });
 
 // ----- routing -----
@@ -79,6 +86,10 @@ function route() {
   if (path === '/practice') return practiceSetup();
   if (path === '/adaptive') return adaptiveSetup();
   if (path === '/reviews') return reviewsList();
+  if (path === '/booklet') return bookletHome();
+  if (path === '/analysis') return analysisPage();
+  const occ = path.match(/^\/occurrences\/(listening|reading)\/(.+)$/);
+  if (occ) return occurrencesPage(occ[1], decodeURIComponent(occ[2]));
   if (path === '/run') {
     if (!session) { location.hash = '#/'; return; }
     return session.mode === 'practice' ? renderPractice() : renderAdaptive();
@@ -123,7 +134,7 @@ function startRetake(s) {
   if (!canRetake(s)) return false;
   const label = `Retake · ${s.label || s.mode}`;
   if (s.mode === 'practice') {
-    const queue = s.queueIds.map((x) => byId.get(x)).filter(Boolean);
+    const queue = bySection(s.queueIds.map((x) => byId.get(x)).filter(Boolean));
     if (!queue.length) return false;
     session = {
       id: newId(), mode: 'practice', label, startedAt: Date.now(), finished: false,
@@ -147,7 +158,7 @@ function resumeSession(id) {
   if (!s || !resumable(s)) return false;
   const correct = s.records.filter((r) => r.correct).length;
   if (s.mode === 'practice') {
-    const queue = s.queueIds.map((x) => byId.get(x)).filter(Boolean);
+    const queue = bySection(s.queueIds.map((x) => byId.get(x)).filter(Boolean));
     if (!queue.length) return false;
     session = {
       id: s.id, mode: 'practice', label: s.label, startedAt: s.startedAt, finished: false,
@@ -199,6 +210,14 @@ function home() {
       <a class="card" href="#/adaptive" style="text-decoration:none;color:inherit">
         <h2>2 · Adjust difficulty</h2>
         <p class="muted">Starts at Basic. Two correct answers in a row move you to Advanced; a wrong answer at Advanced moves you back down. Ends with an estimated level.</p>
+      </a>
+      <a class="card" href="#/booklet" style="text-decoration:none;color:inherit">
+        <h2>4 · Booklet test</h2>
+        <p class="muted">The full mock test booklets in order: listening (audio), then reading. Answers are checked at the end.</p>
+      </a>
+      <a class="card" href="#/analysis" style="text-decoration:none;color:inherit">
+        <h2>5 · Word analysis</h2>
+        <p class="muted">The most used words and grammar points in listening and in reading, across all the test sets.</p>
       </a>
       <a class="card" href="#/reviews" style="text-decoration:none;color:inherit">
         <h2>3 · Reviews</h2>
@@ -272,7 +291,7 @@ function practiceSetup() {
       return;
     }
     const want = f.get('count');
-    const queue = shuffle(pool).slice(0, want === 'all' ? pool.length : Number(want));
+    const queue = bySection(shuffle(pool).slice(0, want === 'all' ? pool.length : Number(want)));
     const label = `Select difficulty · ${bands.map((b) => bank.bands[b]).join(' + ')} · ${skills.map((s) => SKILL_NAME[s]).join(' + ')} · ${queue.length} questions`;
     session = {
       id: newId(), mode: 'practice', label, startedAt: Date.now(), finished: false,
@@ -401,62 +420,85 @@ function questionScreen(q, { header, banner, nav, onAnswer, isLast, prior = null
   return wrap;
 }
 
-// The next unanswered question after position i (wrapping), or i if all are answered.
-function nextUnansweredFrom(i, answered) {
-  const total = session.queue.length;
-  for (let k = 1; k <= total; k++) {
-    const j = (i + k) % total;
-    if (!answered.has(session.queue[j].id)) return j;
-  }
-  return i;
+// Listening questions first, then reading, so the continuous page has one section after another.
+function bySection(queue) {
+  return [...queue.filter((q) => q.skill === 'L'), ...queue.filter((q) => q.skill !== 'L')];
 }
 
-// Number chips for every question in the practice session. Click one to jump to it.
-function practiceNav(answered) {
-  const nav = document.createElement('nav');
-  nav.className = 'review-index';
-  nav.innerHTML = session.queue.map((q, i) => {
+// Chips for every question: grey = not answered, green/red = answered right/wrong. Click to jump.
+function continuousNav(answered) {
+  const chips = session.queue.map((q, i) => {
     const r = answered.get(q.id);
-    const cls = ['chip', r ? (r.correct ? 'ok' : 'bad') : '', i === session.index ? 'current' : ''].join(' ');
+    const cls = ['chip', r ? (r.correct ? 'right' : 'wrong') : ''].join(' ');
     return `<button type="button" class="${cls}" data-jump="${i}" aria-label="Question ${i + 1}">${i + 1}</button>`;
   }).join('');
-  nav.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => {
-    session.index = Number(b.dataset.jump);
-    renderPractice();
-  }));
-  const finish = document.createElement('button');
-  finish.type = 'button';
-  finish.className = 'btn small';
-  finish.textContent = 'Finish & see results';
-  finish.addEventListener('click', () => renderResults());
-  nav.appendChild(finish);
-  return nav;
+  return `<div class="booklet-nav practice-nav">${chips}</div>`;
 }
 
+// The whole session on one page: sections (Listening, Reading), each question with its own controls.
+// Answers are saved as they are given, so an unfinished session can be continued later.
 function renderPractice() {
   const total = session.queue.length;
-  const answered = new Map(session.records.map((r) => [r.id, r]));
-  const q = session.queue[session.index];
-  const prior = answered.get(q.id);
-  const screen = questionScreen(q, {
-    header: () => {
-      const done = session.records.length;
-      const right = session.records.filter((r) => r.correct).length;
-      return `Question ${session.index + 1} of ${total} · ${done} answered · ${right} correct`;
-    },
-    banner: session.index === 0 ? passBanner(session.bands) : '',
-    nav: practiceNav(answered),
-    prior: prior ? { correct: prior.correct, letter: prior.letter, revealed: prior.revealed } : null,
-    nextLabel: () => (session.records.length >= total ? 'See results' : 'Next →'),
-    onAnswer() {},
+  const answered = () => new Map(session.records.map((r) => [r.id, r]));
+  const correctCount = () => session.records.filter((r) => r.correct).length;
+
+  const wrap = document.createElement('section');
+  wrap.innerHTML = `
+    <div class="booklet-head">
+      <strong>${escapeHtml(session.label)}</strong>
+      <span class="muted practice-count">${session.records.length} answered of ${total} · ${correctCount()} correct</span>
+      <button type="button" class="btn small" id="practice-finish">Finish & see results</button>
+      ${continuousNav(answered())}
+    </div>
+    <div class="practice-flow">${passBanner(session.bands)}</div>`;
+  const flow = wrap.querySelector('.practice-flow');
+
+  const cards = [];
+  let lastSkill = null;
+  session.queue.forEach((q, i) => {
+    if (q.skill !== lastSkill) {
+      flow.insertAdjacentHTML('beforeend', `<h2 class="section-title">${escapeHtml(SKILL_NAME[q.skill] || q.skill)}</h2>`);
+      lastSkill = q.skill;
+    }
+    const prior = answered().get(q.id);
+    const block = document.createElement('div');
+    block.className = 'practice-q';
+    block.id = `pq-${i}`;
+    const card = questionCard(q, bank, prior ? null : (res) => {
+      recordResult(q, res);
+      refreshProgress();
+    }, prior ? { correct: prior.correct, letter: prior.letter, revealed: prior.revealed } : null);
+    block.appendChild(card);
+    flow.appendChild(block);
+    cards.push(card);
   });
-  session.advance = () => {
-    if (session.records.length >= total) return renderResults();
-    session.index = nextUnansweredFrom(session.index, new Map(session.records.map((r) => [r.id, r])));
-    renderPractice();
-  };
-  app.replaceChildren(screen);
+
+  // Keeps the header count and chips up to date after each answer.
+  function refreshProgress() {
+    const count = wrap.querySelector('.practice-count');
+    if (count) count.textContent = `${session.records.length} answered of ${total} · ${correctCount()} correct`;
+    const nav = wrap.querySelector('.practice-nav');
+    if (nav) {
+      nav.outerHTML = continuousNav(answered());
+      bindJumps(wrap);
+    }
+  }
+
+  wrap.querySelector('#practice-finish').addEventListener('click', () => renderResults());
+  bindJumps(wrap);
+  currentCards = cards;
+  currentCard = null;
+  app.replaceChildren(wrap);
+  // Continue where the session left off: scroll to the first unanswered question.
+  const firstOpen = session.queue.findIndex((q) => !answered().has(q.id));
   window.scrollTo(0, 0);
+  if (firstOpen > 0) document.getElementById(`pq-${firstOpen}`)?.scrollIntoView({ block: 'start' });
+}
+
+function bindJumps(root) {
+  root.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => {
+    document.getElementById(`pq-${b.dataset.jump}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }));
 }
 
 function renderAdaptive() {
@@ -669,7 +711,7 @@ loadBank()
     // pinyin-pro loads from the CDN; the app works without it.
     return loadPinyin();
   })
-  .then(() => { if (currentCard) currentCard.refresh(); })
+  .then(() => { if (currentCard) currentCard.refresh(); currentCards.forEach((c) => c.refresh()); })
   .catch((err) => {
     console.error(err);
     app.innerHTML = `<div class="card"><p class="error">Could not load the question bank.
