@@ -373,9 +373,6 @@
       pop.hidden = true;
       pop.style.cssText = [
         'position: fixed',
-        'left: 50%',
-        'bottom: 16px',
-        'transform: translateX(-50%)',
         'width: min(90vw, 420px)',
         'max-height: 50vh',
         'overflow: auto',
@@ -399,6 +396,28 @@
     const pop = document.getElementById(POPUP_ID);
     if (pop) pop.hidden = true;
     popupCtx = null;
+  }
+
+  // Put the popup just below the clicked character (above it if there is no room below).
+  // Without an anchor, it goes at the bottom of the screen.
+  function placePopup(pop, anchor) {
+    if (!anchor || !anchor.isConnected) {
+      pop.style.left = '50%';
+      pop.style.top = 'auto';
+      pop.style.bottom = '16px';
+      pop.style.transform = 'translateX(-50%)';
+      return;
+    }
+    const r = anchor.getBoundingClientRect();
+    const width = Math.min(window.innerWidth * 0.9, 420);
+    const height = pop.offsetHeight || 200;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+    let top = r.bottom + 8;
+    if (top + height > window.innerHeight - 8) top = Math.max(8, r.top - height - 8);
+    pop.style.transform = 'none';
+    pop.style.bottom = 'auto';
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
   }
 
   function renderPopup(dict) {
@@ -455,13 +474,15 @@
     }
     pop.replaceChildren(head, word, body);
     pop.hidden = false;
+    placePopup(pop, popupCtx.anchor);
   }
 
-  // Open the dictionary popup for the character at `index` in `text`.
-  function openDictAt(text, index) {
-    popupCtx = { text, index };
+  // Open the dictionary popup for the character at `index` in `text`, next to `anchor` (the clicked character).
+  function openDictAt(text, index, anchor) {
+    popupCtx = { text, index, anchor };
     const pop = getPopup();
     pop.hidden = false;
+    placePopup(pop, anchor);
     loadDict().then(dict => {
       if (popupCtx && popupCtx.text === text) renderPopup(dict);
     }).catch(err => {
@@ -613,16 +634,21 @@
     const body = document.createElement('div');
     body.className = TRANSCRIPT_BODY_CLASS;
     body.style.cssText = 'white-space: pre-wrap;';
-    // Click a Chinese character to open the dictionary popup for the word at that point.
-    body.addEventListener('click', (e) => {
+    // Click a Chinese character in the transcript or in the answer options to open the
+    // dictionary popup for the word at that point (the popup steps through that same text).
+    // getText is read at click time, so the popup always uses the current transcript or options.
+    const dictClick = (getText) => (e) => {
       const z = e.target.closest ? e.target.closest('.' + TRANSCRIPT_TEXT_CLASS) : null;
-      if (z && transcriptView.zh && !transcriptView.en) openDictAt(transcriptView.zh, Number(z.dataset.i));
-    });
+      const text = getText();
+      if (z && text && !transcriptView.en) openDictAt(text, Number(z.dataset.i), z);
+    };
+    body.addEventListener('click', dictClick(() => transcriptView.zh));
 
     // The answer options, shown under the transcript with the same pinyin and English views.
     const optsBody = document.createElement('div');
     optsBody.className = TRANSCRIPT_OPTS_CLASS;
     optsBody.style.cssText = 'white-space: pre-wrap; margin-top: 8px; padding-top: 6px; border-top: 1px dashed #bbb;';
+    optsBody.addEventListener('click', dictClick(() => transcriptView.opts.join('\n')));
 
     // English and Pinyin sit in the top toolbar; copy and Google Translate stay in the panel.
     row.append(enBtn, pyBtn);
@@ -786,11 +812,15 @@
   const answerLog = new Map();
   function recordAnswer() {
     const id = currentItemId();
-    const key = answerText().toUpperCase();
+    // The key is read from the element's full text (ownText can come back empty on this page).
+    const keyEl = document.getElementById('LabAnswer');
+    const key = keyEl ? (keyEl.textContent || '').trim().charAt(0).toUpperCase() : '';
     const checked = document.querySelector('input[type=radio]:checked');
     if (!id || !/^[A-D]$/.test(key) || !checked) return;
-    const student = String(checked.value || '').charAt(0).toUpperCase();
-    if (!/^[A-D]$/.test(student)) return;
+    // The letter is at the end of the radio id (choiceRadioD, choiceRadio5D) or the start of the value (A5).
+    const m = /([A-D])$/i.exec(checked.id || '') || /^([A-D])/i.exec(String(checked.value || ''));
+    if (!m) return;
+    const student = m[1].toUpperCase();
     answerLog.set(id, { key, student, correct: student === key });
   }
 
