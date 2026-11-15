@@ -1,0 +1,12 @@
+{
+  "_about": "Answers the text layer of the booklet answer PDF loses (a digit is missing), or that the printed key has wrong (series 3 prints 44 in the place of 34), checked against the rendered answer page. Keyed by series, then listening or reading, question number to letter.",
+  "s2": {
+    "listening": { "34": "A" }
+  },
+  "s3": {
+    "listening": { "34": "B" }
+  },
+  "s4": {
+    "listening": { "34": "B" }
+  }
+}

@@ -53,12 +53,35 @@ function collectLines(data) {
   return [...lines].sort();
 }
 
+// Booklet test transcripts and reading text (public/data/booklet). Any line with Chinese counts,
+// since the booklet's short choice lines are shown too.
+async function bookletLines() {
+  const dir = path.join(DATA, 'booklet');
+  if (!(await exists(path.join(dir, 'index.json')))) return [];
+  const index = JSON.parse(await fs.readFile(path.join(dir, 'index.json'), 'utf8'));
+  const out = new Set();
+  for (const s of index.series) {
+    const d = JSON.parse(await fs.readFile(path.join(dir, `s${s}.json`), 'utf8'));
+    for (const sec of d.sections) {
+      for (const item of sec.items) {
+        for (const text of [item.transcript, item.text, item.passage]) {
+          for (const l of (text || '').split('\n')) {
+            const t = l.trim();
+            if (t && HAS_CJK.test(t)) out.add(t);
+          }
+        }
+      }
+    }
+  }
+  return [...out];
+}
+
 async function main() {
   await fs.mkdir(CACHE, { recursive: true });
   const data = JSON.parse(await fs.readFile(path.join(DATA, 'questions.json'), 'utf8'));
   const cache = (await exists(CACHE_FILE)) ? JSON.parse(await fs.readFile(CACHE_FILE, 'utf8')) : {};
 
-  const all = collectLines(data);
+  const all = [...new Set([...collectLines(data), ...(await bookletLines())])].sort();
   const todo = all.filter((l) => !(l in cache)).slice(0, LIMIT);
   const cached = all.filter((l) => l in cache).length;
   console.log(`${all.length} lines to show; ${cached} already translated; ${todo.length} to translate now`);

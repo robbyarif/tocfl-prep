@@ -227,6 +227,86 @@ ruby.zh rt { font-size: 0.5em; color: var(--muted); }
 .pass p { margin: 6px 0 0; font-size: 14px; }
 .review-list { list-style: none; padding: 0; margin: 0; }
 .review-row .row { margin-top: 8px; }
+.booklet-head { position: sticky; top: 52px; z-index: 4; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--bg); padding: 8px 0; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.booklet-flow { max-width: 1080px; margin: 0 auto; }
+.booklet-nav { display: grid; gap: 4px; }
+.tr-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.tr-msg { font-size: 13px; }
+.practice-flow { max-width: 1080px; margin: 0 auto; }
+.booklet-nav.practice-nav { display: flex; flex-wrap: wrap; gap: 4px; }
+.practice-q { margin: 8px 0 18px; }
+.section-title { font-size: 20px; margin: 26px 0 8px; padding-bottom: 6px; border-bottom: 2px solid var(--accent); }
+.nav-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.nav-label { font-size: 13px; margin-right: 6px; min-width: 90px; }
+.booklet-nav .chip { min-width: 40px; min-height: 26px; font-size: 12px; padding: 0 4px; }
+.booklet-nav .chip.todo { color: var(--muted); border-color: var(--line); }
+.booklet-nav .chip.submitted { border-color: #3b7fd1; color: #3b7fd1; }
+.booklet-nav .chip.right { background: var(--good-bg); border-color: var(--good); color: var(--good); }
+.booklet-nav .chip.wrong { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+.bq-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.bq-grid.no-pic { grid-template-columns: minmax(0, 1fr); }
+.bq-grid.no-pic .bq-left { display: none; }
+.bq-left .page-wrap { margin-bottom: 0; }
+.bq-right .choices { margin-top: 8px; }
+@media (max-width: 760px) {
+  .bq-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.bq, .practice-q, .section-title { scroll-margin-top: 150px; }
+.bq { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 8px 0 18px; }
+.bq .choice.correct { background: var(--good-bg); border-color: var(--good); color: var(--good); }
+.bq .choice.wrong { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+.bq .choices { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.bq .choice { min-width: 56px; text-align: center; }
+/* Cloze (reading 41-45): one passage block, then the questions with their options. */
+.cloze-questions { margin-top: 12px; }
+.cloze-q { border-top: 1px solid var(--line); padding: 10px 0 14px; }
+.cloze-q .tags { margin-bottom: 4px; }
+.bq-grid.stacked { grid-template-columns: minmax(0, 1fr); }
+.bq-grid.stacked .bq-left { max-width: 1100px; }
+.opt-row { display: flex; gap: 10px; align-items: flex-start; margin: 6px 0; }
+.opt-row .choice { flex: 0 0 auto; }
+.opt-body { font-size: 20px; line-height: 1.7; padding-top: 4px; }
+
+/* OCR overlay on a booklet picture (reading 21-30): word boxes drawn over the picture. */
+.ocr-btn { margin-bottom: 6px; }
+.ocr-layer { position: absolute; inset: 0; pointer-events: none; }
+.ocr-box { position: absolute; border: 1px dashed #f5c542; background: rgba(245, 197, 66, 0.16); cursor: pointer; pointer-events: auto; box-sizing: border-box; }
+.ocr-box:hover { background: rgba(245, 197, 66, 0.45); }
+
+/* Booklet: wide layout (the page container widens only while the booklet is open) and larger text. */
+#app:has(.booklet-head) { max-width: 1600px; }
+.booklet-flow { max-width: none; }
+.bq .choice { font-size: 20px; min-width: 64px; min-height: 44px; }
+.bq .transcript, .bq .tr-body { font-size: 19px; line-height: 1.8; }
+.bq .tr-msg, .bq .muted { font-size: 15px; }
+.bq .stem { font-size: 22px; }
+.booklet-head { font-size: 17px; }
+
+/* Word-frequency page inside the booklet. */
+.freq h1 { font-size: 24px; margin: 16px 0 6px; }
+.freq-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.freq-tools label { display: flex; gap: 6px; align-items: center; font-size: 15px; }
+.freq-list { list-style: none; padding: 0; margin: 0; counter-reset: none; }
+.freq-row { display: grid; grid-template-columns: 56px minmax(120px, 260px) 70px minmax(0, 1fr); gap: 12px; align-items: center; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+.freq-rank { color: var(--muted); font-size: 15px; text-align: right; }
+.freq-word { font-size: 22px; background: none; border: 1px solid transparent; border-radius: 6px; padding: 2px 8px; color: var(--text); cursor: pointer; text-align: left; }
+.freq-word:hover { border-color: var(--accent); }
+.freq-count { font-weight: 700; font-size: 17px; }
+.freq-def { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) {
+  .freq-row { grid-template-columns: 40px minmax(0, 1fr) 56px; }
+  .freq-def { grid-column: 2 / 4; white-space: normal; }
+}
+.player .seek { flex: 1 1 180px; min-width: 120px; accent-color: var(--accent); }
+/* Fixed A4 proportions so the layout does not shift while lazy images load (which moved the navigator jumps). */
+.booklet-page { display: block; width: 100%; height: auto; aspect-ratio: 595.32 / 841.92; border: 1px solid var(--line); border-radius: 6px; background: #fff; margin-bottom: 10px; }
+.choice.picked { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+/* Part heading and directions pages: shown at a smaller size. */
+.booklet-page.small { width: 52%; margin: 0 auto 14px; }
+.booklet-review { list-style: none; padding: 0; }
+.booklet-review li { padding: 3px 0; }
+.booklet-review li.ok { color: var(--good); }
+.booklet-review li.bad { color: var(--bad); }
 .resume-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .review-tools { margin-bottom: 12px; align-items: center; justify-content: space-between; }
 .review-index { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
@@ -246,4 +326,23 @@ ruby.zh rt { font-size: 0.5em; color: var(--muted); }
   .container { padding: 12px; }
   .stem { font-size: 17px; }
   .choice { font-size: 16px; }
+}
+
+/* Word and grammar analysis page. */
+.an-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; }
+.an-col h2 { margin-top: 8px; }
+.an-col h3 { font-size: 16px; margin: 16px 0 6px; }
+.an-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.an-table th, .an-table td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+.an-table th { color: var(--muted); font-weight: 600; }
+.an-num { text-align: right; white-space: nowrap; }
+.an-zh { font-size: 20px; font-weight: 600; }
+.an-words { list-style: none; padding: 0; margin: 0; }
+.an-words li { display: grid; grid-template-columns: 32px 56px minmax(0, 1fr) 60px; gap: 4px 10px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.an-rank { color: var(--muted); font-size: 14px; text-align: right; }
+.an-py { font-size: 14px; }
+.an-words .an-num { grid-column: 4; }
+.an-gloss { grid-column: 3 / 5; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) {
+  .an-grid { grid-template-columns: minmax(0, 1fr); }
 }
